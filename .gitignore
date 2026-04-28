@@ -1,0 +1,41 @@
+# Large downloaded datasets and extracted traces
+data/
+
+# Generated analysis outputs, matrices, plots, and result CSVs
+outputs/
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Notebook and editor noise
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local logs and temporary files
+*.log
+*.tmp
+*.part
+
+# Binary research notes are kept local; summarize shareable content in Markdown.
+*.doc
+*.docx
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.tar.xz
+*.rar
+*.7z
