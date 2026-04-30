@@ -29,9 +29,13 @@ bash scripts/download_azure_traces.sh
 
 ## Important Files
 
-- `01_jay/azure_trace_week1.py`: Python analysis and baseline policy script
+- `code/azure_trace_week1.py`: Python analysis and baseline policy script
+- `code/alibaba_trace_week2.py`: Alibaba microservices preprocessing and graph-prior script
 - `scripts/download_azure_traces.sh`: dataset download/extract helper
+- `scripts/preprocess/download_alibaba_microservices_2021.sh`: Alibaba microservices download helper
+- `RUNNING.md`: reproducible command reference
 - `week1.md`: research summary intended for sharing in Notion or with collaborators
+- `week2.md`: Alibaba graph-prior and simulator setup summary
 
 ## Reproducibility Notes
 
@@ -44,9 +48,9 @@ pip install pandas numpy matplotlib
 Useful commands:
 
 ```bash
-python 01_jay/azure_trace_week1.py --mode inspect
-python 01_jay/azure_trace_week1.py --mode analysis_2019 --top-k 20 --window 60 --z 3
-python 01_jay/azure_trace_week1.py --mode baseline_2019 --top-k 20 --capacity 20 --cold-start-penalty 800 --execution-ms 100 --static-warm 1 --prediction-window 60
+python code/azure_trace_week1.py --mode inspect
+python code/azure_trace_week1.py --mode analysis_2019 --top-k 20 --window 60 --z 3
+python code/azure_trace_week1.py --mode baseline_2019 --top-k 20 --capacity 20 --cold-start-penalty 800 --execution-ms 100 --static-warm 1 --prediction-window 60
 ```
 
 ## Git Hygiene

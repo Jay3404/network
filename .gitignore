@@ -11,8 +11,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+.venv*/
 venv/
 env/
+tools/
 
 # Notebook and editor noise
 .ipynb_checkpoints/
