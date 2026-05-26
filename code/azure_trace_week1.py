@@ -61,6 +61,8 @@ def ensure_base_dirs() -> None:
         OUTPUT_ROOT / "baseline_2019",
         OUTPUT_ROOT / "predictive_sweep_2019",
         OUTPUT_ROOT / "ml_forecast_2019",
+        OUTPUT_ROOT / "holdout_2019",
+        OUTPUT_ROOT / "sensitivity_2019",
     ]:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -263,13 +265,21 @@ def build_top_entity_workload(
     if top_entities.empty:
         return pd.DataFrame(), top_entities
 
+    return build_selected_entity_workload(files, entity_col, entity_type, top_entities)
+
+
+def build_selected_entity_workload(
+    files: list[Path],
+    entity_col: str,
+    entity_type: str,
+    top_entities: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if top_entities.empty:
+        return pd.DataFrame(), top_entities
+
     top_ids = [str(value) for value in top_entities["entity_id"].tolist()]
     top_set = set(top_ids)
-    selection_label = (
-        f"{coverage_threshold:.3%} coverage"
-        if coverage_threshold is not None
-        else f"top-{top_k}"
-    )
+    selection_label = f"{len(top_ids)} selected"
     records: list[pd.DataFrame] = []
 
     for day_index, path in enumerate(files):
@@ -652,6 +662,19 @@ def apply_policy(
     return df
 
 
+def weighted_quantile(values: pd.Series, weights: pd.Series, quantile: float) -> float:
+    clean = pd.DataFrame({"value": values.astype(float), "weight": weights.astype(float)})
+    clean = clean[(clean["weight"] > 0) & clean["value"].notna()]
+    if clean.empty:
+        return 0.0
+    clean = clean.sort_values("value")
+    cumulative = clean["weight"].cumsum()
+    threshold = quantile * clean["weight"].sum()
+    index = cumulative.searchsorted(threshold, side="left")
+    index = min(int(index), len(clean) - 1)
+    return float(clean["value"].iloc[index])
+
+
 def summarize_baselines(baseline_df: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for policy, group in baseline_df.groupby("policy", sort=False):
@@ -676,6 +699,12 @@ def summarize_baselines(baseline_df: pd.DataFrame) -> pd.DataFrame:
                 "weighted_avg_latency_ms": weighted_avg_latency_ms,
                 "p95_latency_ms": float(active["avg_latency_ms"].quantile(0.95)) if not active.empty else 0.0,
                 "p99_latency_ms": float(active["avg_latency_ms"].quantile(0.99)) if not active.empty else 0.0,
+                "weighted_p95_latency_ms": weighted_quantile(
+                    group["avg_latency_ms"], invocations, 0.95
+                ),
+                "weighted_p99_latency_ms": weighted_quantile(
+                    group["avg_latency_ms"], invocations, 0.99
+                ),
                 "avg_warm_instances": float(group["warm_instances"].mean()),
                 "total_resource_cost": float(group["resource_cost"].sum()),
             }
@@ -795,6 +824,258 @@ def run_predictive_sweep_2019(
     summary_df = summary_df[["policy"] + variant_columns + metric_columns]
     save_csv(summary_df, output_dir / "predictive_variant_summary.csv")
     plot_baseline_bars(summary_df, output_dir)
+
+
+def entity_selection_for_level(level: str) -> tuple[str, str, str]:
+    if level == "app":
+        return "HashApp", "app", "top_apps.csv"
+    if level == "function":
+        return "HashFunction", "function", "top_functions.csv"
+    raise ValueError("--baseline-level must be either app or function")
+
+
+def split_policy_summary(
+    policy_df: pd.DataFrame,
+    train_minutes: int,
+    split_name: str,
+) -> pd.DataFrame:
+    if split_name == "train":
+        split_df = policy_df[policy_df["time_index"] < train_minutes]
+    elif split_name == "test":
+        split_df = policy_df[policy_df["time_index"] >= train_minutes]
+    else:
+        raise ValueError(f"Unsupported split: {split_name}")
+
+    summary = summarize_baselines(split_df)
+    summary.insert(0, "split", split_name)
+    return summary
+
+
+def evaluate_policy_grid(
+    workload: pd.DataFrame,
+    args: argparse.Namespace,
+    train_minutes: int,
+    capacities: list[int],
+    cold_start_penalties: list[float],
+    static_warm_values: list[int],
+    prediction_windows: list[int],
+    threshold_windows: list[int],
+    threshold_z_values: list[float],
+    include_train: bool,
+) -> pd.DataFrame:
+    rows: list[pd.DataFrame] = []
+
+    for capacity in capacities:
+        for cold_start_penalty in cold_start_penalties:
+            policy_specs: list[dict[str, object]] = [
+                {
+                    "family": "reactive",
+                    "policy": "reactive",
+                    "label": "reactive",
+                    "static_warm": 0,
+                    "prediction_window": args.prediction_window,
+                    "variant": None,
+                }
+            ]
+
+            for static_warm in static_warm_values:
+                policy_specs.append(
+                    {
+                        "family": "static",
+                        "policy": "static",
+                        "label": f"static_{static_warm}",
+                        "static_warm": static_warm,
+                        "prediction_window": args.prediction_window,
+                        "variant": None,
+                    }
+                )
+
+            for window in prediction_windows:
+                policy_specs.append(
+                    {
+                        "family": "local_predictive",
+                        "policy": "local_predictive",
+                        "label": f"local_predictive_w{window}",
+                        "static_warm": args.static_warm,
+                        "prediction_window": window,
+                        "variant": {"model": "ma", "window": window},
+                    }
+                )
+
+            for window in threshold_windows:
+                for z_value in threshold_z_values:
+                    z_label = format_number_label(z_value)
+                    policy_specs.append(
+                        {
+                            "family": "z_trigger",
+                            "policy": "local_predictive",
+                            "label": f"z{z_label}_trigger_w{window}",
+                            "static_warm": args.static_warm,
+                            "prediction_window": window,
+                            "variant": {
+                                "model": "mean_std",
+                                "window": window,
+                                "z": z_value,
+                            },
+                        }
+                    )
+
+            for spec in policy_specs:
+                policy_df = apply_policy(
+                    workload=workload,
+                    policy=str(spec["policy"]),
+                    capacity_per_instance=capacity,
+                    cold_start_penalty_ms=cold_start_penalty,
+                    execution_ms=args.execution_ms,
+                    static_warm_instances=int(spec["static_warm"]),
+                    prediction_window=int(spec["prediction_window"]),
+                    predictive_variant=spec["variant"],
+                    policy_label=str(spec["label"]),
+                )
+
+                split_names = ["train", "test"] if include_train else ["test"]
+                for split_name in split_names:
+                    summary = split_policy_summary(policy_df, train_minutes, split_name)
+                    summary["family"] = spec["family"]
+                    summary["capacity"] = capacity
+                    summary["cold_start_penalty_ms"] = cold_start_penalty
+                    summary["static_warm_instances"] = spec["static_warm"]
+                    summary["prediction_window"] = spec["prediction_window"]
+                    variant = spec["variant"] or {}
+                    summary["variant_model"] = variant.get("model", "")
+                    summary["variant_window"] = variant.get("window", "")
+                    summary["variant_z"] = variant.get("z", "")
+                    rows.append(summary)
+
+                del policy_df
+                gc.collect()
+
+    if not rows:
+        return pd.DataFrame()
+
+    result = pd.concat(rows, ignore_index=True)
+    leading = [
+        "split",
+        "family",
+        "policy",
+        "capacity",
+        "cold_start_penalty_ms",
+        "static_warm_instances",
+        "prediction_window",
+        "variant_model",
+        "variant_window",
+        "variant_z",
+    ]
+    remaining = [column for column in result.columns if column not in leading]
+    return result[leading + remaining]
+
+
+def build_holdout_workload(
+    args: argparse.Namespace,
+    files: list[Path],
+    output_dir: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame, int]:
+    entity_col, entity_type, top_filename = entity_selection_for_level(args.baseline_level)
+    train_files = files[: args.train_days]
+    if len(train_files) < args.train_days:
+        raise ValueError(
+            f"--train-days={args.train_days} requested but only {len(train_files)} files are available"
+        )
+
+    coverage = args.coverage_threshold if args.coverage_threshold is not None else 0.99
+    log(
+        f"Selecting {entity_type}s from first {args.train_days} day(s) "
+        f"with {coverage:.3%} invocation coverage"
+    )
+    top_entities = compute_top_entities(train_files, entity_col, args.top_k, coverage)
+    save_csv(top_entities, output_dir / top_filename)
+
+    log("Building full workload for temporal holdout evaluation")
+    workload, _ = build_selected_entity_workload(files, entity_col, entity_type, top_entities)
+    train_minutes = args.train_days * 1440
+    return workload, top_entities, train_minutes
+
+
+def run_holdout_2019(
+    args: argparse.Namespace,
+    files: list[Path],
+    output_dir: Path,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    workload, top_entities, train_minutes = build_holdout_workload(args, files, output_dir)
+    save_csv(
+        pd.DataFrame(
+            [
+                {
+                    "train_days": args.train_days,
+                    "test_days": max(0.0, (workload["time_index"].max() + 1 - train_minutes) / 1440),
+                    "selected_entities": len(top_entities),
+                    "train_minutes": train_minutes,
+                    "coverage_threshold": args.coverage_threshold
+                    if args.coverage_threshold is not None
+                    else 0.99,
+                }
+            ]
+        ),
+        output_dir / "holdout_metadata.csv",
+    )
+
+    summary = evaluate_policy_grid(
+        workload=workload,
+        args=args,
+        train_minutes=train_minutes,
+        capacities=[args.capacity],
+        cold_start_penalties=[args.cold_start_penalty],
+        static_warm_values=parse_int_list(args.static_warm_values),
+        prediction_windows=parse_int_list(args.prediction_window_values),
+        threshold_windows=parse_int_list(args.threshold_window_values),
+        threshold_z_values=parse_float_list(args.threshold_z_values),
+        include_train=True,
+    )
+    save_csv(summary, output_dir / "holdout_policy_summary.csv")
+
+    train_summary = summary[summary["split"] == "train"].copy()
+    best_rows: list[pd.Series] = []
+    for family, family_df in train_summary.groupby("family", sort=False):
+        sort_cols = ["weighted_avg_latency_ms", "cold_served_ratio", "total_resource_cost"]
+        best_index = family_df.sort_values(sort_cols).index[0]
+        best_train = family_df.loc[best_index]
+        matching_test = summary[
+            (summary["split"] == "test")
+            & (summary["family"] == family)
+            & (summary["policy"] == best_train["policy"])
+            & (summary["capacity"] == best_train["capacity"])
+            & (summary["cold_start_penalty_ms"] == best_train["cold_start_penalty_ms"])
+        ]
+        if not matching_test.empty:
+            best_rows.append(matching_test.iloc[0])
+
+    if best_rows:
+        best_df = pd.DataFrame(best_rows).reset_index(drop=True)
+        save_csv(best_df, output_dir / "holdout_best_family_test_summary.csv")
+        plot_baseline_bars(best_df, output_dir)
+
+
+def run_sensitivity_2019(
+    args: argparse.Namespace,
+    files: list[Path],
+    output_dir: Path,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    workload, _, train_minutes = build_holdout_workload(args, files, output_dir)
+    summary = evaluate_policy_grid(
+        workload=workload,
+        args=args,
+        train_minutes=train_minutes,
+        capacities=parse_int_list(args.sensitivity_capacities),
+        cold_start_penalties=parse_float_list(args.sensitivity_cold_start_penalties),
+        static_warm_values=parse_int_list(args.static_warm_values),
+        prediction_windows=[args.prediction_window],
+        threshold_windows=[args.window],
+        threshold_z_values=parse_float_list(args.threshold_z_values),
+        include_train=False,
+    )
+    save_csv(summary, output_dir / "sensitivity_policy_summary.csv")
 
 
 def workload_to_matrix(
@@ -1508,14 +1789,24 @@ def parse_args() -> argparse.Namespace:
             "baseline_2019",
             "predictive_sweep_2019",
             "ml_forecast_2019",
+            "holdout_2019",
+            "sensitivity_2019",
         ],
     )
     parser.add_argument("--top-k", type=int, default=20)
     parser.add_argument(
+        "--coverage",
         "--coverage-threshold",
+        dest="coverage_threshold",
         type=float,
         default=None,
         help="Select the minimum number of entities whose cumulative invocation coverage reaches this threshold.",
+    )
+    parser.add_argument(
+        "--baseline-level",
+        choices=["app", "function"],
+        default="app",
+        help="Entity level for baseline and holdout simulations.",
     )
     parser.add_argument("--window", type=int, default=60)
     parser.add_argument("--z", type=float, default=3.0)
@@ -1529,6 +1820,37 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated static warm instance counts for sensitivity analysis.",
     )
     parser.add_argument("--prediction-window", type=int, default=60)
+    parser.add_argument(
+        "--prediction-window-values",
+        default="30,60,120",
+        help="Comma-separated windows for temporal holdout local predictive policies.",
+    )
+    parser.add_argument(
+        "--threshold-window-values",
+        default="30,60,120",
+        help="Comma-separated windows for z-trigger temporal holdout policies.",
+    )
+    parser.add_argument(
+        "--threshold-z-values",
+        default="2,3",
+        help="Comma-separated z values for mean/std trigger policies.",
+    )
+    parser.add_argument(
+        "--train-days",
+        type=int,
+        default=10,
+        help="Number of initial days used for temporal holdout parameter selection.",
+    )
+    parser.add_argument(
+        "--sensitivity-cold-start-penalties",
+        default="200,500,800,1500",
+        help="Comma-separated cold-start penalties for sensitivity evaluation.",
+    )
+    parser.add_argument(
+        "--sensitivity-capacities",
+        default="10,20,50",
+        help="Comma-separated per-instance capacities for sensitivity evaluation.",
+    )
     parser.add_argument(
         "--predictive-variants",
         default=DEFAULT_PREDICTIVE_VARIANTS,
@@ -1596,6 +1918,21 @@ def parse_int_list(value: str) -> list[int]:
         items.append(item)
     if not items:
         raise ValueError("--static-warm-values must contain at least one value")
+    return items
+
+
+def parse_float_list(value: str) -> list[float]:
+    items: list[float] = []
+    for raw_item in value.split(","):
+        raw_item = raw_item.strip()
+        if not raw_item:
+            continue
+        item = float(raw_item)
+        if item < 0:
+            raise ValueError("Float list values must be non-negative")
+        items.append(item)
+    if not items:
+        raise ValueError("Float list must contain at least one value")
     return items
 
 
@@ -1696,6 +2033,8 @@ def main() -> None:
         raise ValueError("--top-k must be positive")
     if args.coverage_threshold is not None and not (0 < args.coverage_threshold <= 1):
         raise ValueError("--coverage-threshold must be in the range (0, 1]")
+    if args.train_days <= 0:
+        raise ValueError("--train-days must be positive")
     if args.ml_seq_len <= 0:
         raise ValueError("--ml-seq-len must be positive")
     if args.ml_train_days <= 0:
@@ -1793,11 +2132,22 @@ def main() -> None:
         combined_summary = pd.concat([global_summary, app_summary, function_summary], ignore_index=True)
         save_csv(combined_summary, analysis_dir / "combined_summary_metrics.csv")
     elif args.mode == "baseline_2019":
-        run_baseline_2019(args, files, OUTPUT_ROOT / "baseline_2019")
+        entity_col, entity_type, _ = entity_selection_for_level(args.baseline_level)
+        run_baseline_2019(
+            args,
+            files,
+            OUTPUT_ROOT / "baseline_2019",
+            entity_col=entity_col,
+            entity_type=entity_type,
+        )
     elif args.mode == "predictive_sweep_2019":
         run_predictive_sweep_2019(args, files, OUTPUT_ROOT / "predictive_sweep_2019")
     elif args.mode == "ml_forecast_2019":
         run_ml_forecast_2019(args, files, OUTPUT_ROOT / "ml_forecast_2019")
+    elif args.mode == "holdout_2019":
+        run_holdout_2019(args, files, OUTPUT_ROOT / "holdout_2019")
+    elif args.mode == "sensitivity_2019":
+        run_sensitivity_2019(args, files, OUTPUT_ROOT / "sensitivity_2019")
     else:
         raise ValueError(f"Unsupported mode: {args.mode}")
 
