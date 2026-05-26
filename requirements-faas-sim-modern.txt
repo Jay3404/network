@@ -1,0 +1,18 @@
+# Modern dependency set for checking faas-sim imports on current Python.
+#
+# faas-sim's upstream requirements.txt pins packages from 2020 and is not
+# installable on Python 3.14. This file intentionally uses current packages and
+# installs faas-sim itself with --no-deps in scripts/check_faas_sim_modern.sh.
+numpy
+pandas
+matplotlib
+scipy
+scikit-learn
+simpy
+networkx
+pyvis
+edgerun-skippy-core
+srds
+tqdm
+requests
+joblib
