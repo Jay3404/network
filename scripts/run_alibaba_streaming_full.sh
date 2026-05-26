@@ -81,7 +81,7 @@ download_if_missing() {
 
 ingested() {
   local source_id="$1"
-  "${PYTHON_BIN}" "${ROOT_DIR}/01_jay/alibaba_microservices_streaming.py" \
+  "${PYTHON_BIN}" "${ROOT_DIR}/code/alibaba_microservices_streaming.py" \
     --mode is_ingested \
     --db-path "${STREAM_DB_PATH}" \
     --source-id "${source_id}" \
@@ -128,7 +128,7 @@ process_shard() {
       exit 1
     fi
 
-    "${PYTHON_BIN}" "${ROOT_DIR}/01_jay/alibaba_microservices_streaming.py" \
+    "${PYTHON_BIN}" "${ROOT_DIR}/code/alibaba_microservices_streaming.py" \
       --mode ingest \
       --db-path "${STREAM_DB_PATH}" \
       --component "${stream_component}" \
@@ -147,7 +147,7 @@ process_shard() {
   done
 }
 
-"${PYTHON_BIN}" "${ROOT_DIR}/01_jay/alibaba_microservices_streaming.py" \
+"${PYTHON_BIN}" "${ROOT_DIR}/code/alibaba_microservices_streaming.py" \
   --mode init \
   --db-path "${STREAM_DB_PATH}"
 
@@ -161,7 +161,7 @@ if (( MSRTQPS_MAX_INDEX >= 0 )); then
   exit 1
 fi
 
-"${PYTHON_BIN}" "${ROOT_DIR}/01_jay/alibaba_microservices_streaming.py" \
+"${PYTHON_BIN}" "${ROOT_DIR}/code/alibaba_microservices_streaming.py" \
   --mode finalize \
   --db-path "${STREAM_DB_PATH}" \
   --output-dir "${STREAM_OUTPUT_DIR}" \

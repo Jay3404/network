@@ -628,8 +628,8 @@ Expanding-window rolling-origin 결과:
 재현 명령은 99% coverage subset을 직접 선택하도록 다음 형태를 사용한다.
 
 ```bash
-python 01_jay/azure_trace_week1.py --mode app_2019 --coverage 0.99 --window 60 --z 3
-python 01_jay/azure_trace_week1.py --mode baseline_2019 --baseline-level app --coverage 0.99 --capacity 20 --cold-start-penalty 800 --execution-ms 100 --static-warm 1 --prediction-window 60
+python code/azure_trace_week1.py --mode app_2019 --coverage 0.99 --window 60 --z 3
+python code/azure_trace_week1.py --mode baseline_2019 --baseline-level app --coverage 0.99 --capacity 20 --cold-start-penalty 800 --execution-ms 100 --static-warm 1 --prediction-window 60
 ```
 
 ## 11. Temporal Holdout 검증
@@ -639,7 +639,7 @@ python 01_jay/azure_trace_week1.py --mode baseline_2019 --baseline-level app --c
 실행 명령:
 
 ```bash
-python 01_jay/azure_trace_week1.py \
+python code/azure_trace_week1.py \
   --mode holdout_2019 \
   --baseline-level app \
   --coverage 0.99 \
@@ -687,7 +687,7 @@ Train에서 각 family별 best config를 고른 뒤 test에서 평가한 결과:
 실행 명령:
 
 ```bash
-python 01_jay/azure_trace_week1.py \
+python code/azure_trace_week1.py \
   --mode sensitivity_2019 \
   --baseline-level app \
   --coverage 0.99 \

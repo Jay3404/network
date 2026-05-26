@@ -53,8 +53,8 @@ Azure workload에 graph/resource context를 부여하는 prior로 사용한다.
 | 파일 | 역할 |
 |---|---|
 | scripts/download_alibaba_microservices.sh | Alibaba shard 다운로드/해제 |
-| 01_jay/alibaba_microservices_week3.py | graph/resource/topology prior 생성 |
-| 01_jay/alibaba_microservices_streaming.py | 전체 shard streaming ingest |
+| code/alibaba_microservices_week3.py | graph/resource/topology prior 생성 |
+| code/alibaba_microservices_streaming.py | 전체 shard streaming ingest |
 | scripts/run_alibaba_streaming_full.sh | 다운로드, ingest, 삭제 자동화 |
 | scripts/setup_faas_sim.sh | faas-sim 설치 helper |
 | requirements-faas-sim-modern.txt | 최신 Python 호환 의존성 |

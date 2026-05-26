@@ -15,8 +15,8 @@
 권장 재현 명령:
 
 ```bash
-python 01_jay/azure_trace_week1.py --mode app_2019 --coverage 0.99 --window 60 --z 3
-python 01_jay/azure_trace_week1.py --mode baseline_2019 --baseline-level app --coverage 0.99 --capacity 20 --cold-start-penalty 800 --execution-ms 100 --static-warm 1 --prediction-window 60
+python code/azure_trace_week1.py --mode app_2019 --coverage 0.99 --window 60 --z 3
+python code/azure_trace_week1.py --mode baseline_2019 --baseline-level app --coverage 0.99 --capacity 20 --cold-start-penalty 800 --execution-ms 100 --static-warm 1 --prediction-window 60
 ```
 
 ## 2. 한계점 보완 전략
@@ -42,8 +42,8 @@ Synthetic topology = edge collaboration and placement experiment surface
 | 파일 | 역할 |
 |---|---|
 | `scripts/download_alibaba_microservices.sh` | Alibaba Microservices v2021 다운로드/압축 해제 helper |
-| `01_jay/alibaba_microservices_week3.py` | call graph, resource, placement, topology prior 생성 |
-| `01_jay/alibaba_microservices_streaming.py` | 전체 shard를 SQLite aggregate DB로 streaming ingest |
+| `code/alibaba_microservices_week3.py` | call graph, resource, placement, topology prior 생성 |
+| `code/alibaba_microservices_streaming.py` | 전체 shard를 SQLite aggregate DB로 streaming ingest |
 | `scripts/run_alibaba_streaming_full.sh` | shard별 다운로드/해제/ingest/삭제 full runner |
 | `scripts/setup_faas_sim.sh` | faas-sim을 `data/tools/faas-sim`에 설치하는 helper |
 | `week3_4.md` | 3-4주차 실험 설계 및 실행 절차 |
@@ -101,7 +101,7 @@ download archive -> extract CSV -> ingest aggregate DB -> delete archive -> dele
 ## 5. Alibaba 구조 점검
 
 ```bash
-python 01_jay/alibaba_microservices_week3.py --mode inspect
+python code/alibaba_microservices_week3.py --mode inspect
 ```
 
 출력:
@@ -140,7 +140,7 @@ graph_score = call_weight * (1 + rt_weight)
 실행:
 
 ```bash
-python 01_jay/alibaba_microservices_week3.py --mode graph_prior --min-call-count 2 --top-edges 100000
+python code/alibaba_microservices_week3.py --mode graph_prior --min-call-count 2 --top-edges 100000
 ```
 
 출력:
@@ -173,7 +173,7 @@ affinity_score = observation_share * (1 + node_available_score)
 실행:
 
 ```bash
-python 01_jay/alibaba_microservices_week3.py --mode resource_prior --candidate-nodes-per-service 3
+python code/alibaba_microservices_week3.py --mode resource_prior --candidate-nodes-per-service 3
 ```
 
 출력:
@@ -192,7 +192,7 @@ Azure trace에 edge topology가 없으므로, Alibaba node summary에서 여유 
 실행:
 
 ```bash
-python 01_jay/alibaba_microservices_week3.py --mode topology --edge-nodes 32 --neighbor-degree 2
+python code/alibaba_microservices_week3.py --mode topology --edge-nodes 32 --neighbor-degree 2
 ```
 
 출력:
