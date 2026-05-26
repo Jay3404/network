@@ -25,32 +25,44 @@ The dataset should be recreated locally with:
 
 ```bash
 bash scripts/download_azure_traces.sh
+bash scripts/download_alibaba_microservices.sh
 ```
 
 ## Important Files
 
-- `code/azure_trace_week1.py`: Python analysis and baseline policy script
-- `code/alibaba_trace_week2.py`: Alibaba microservices preprocessing and graph-prior script
+- `01_jay/azure_trace_week1.py`: Python analysis and baseline policy script
+- `01_jay/alibaba_microservices_week3.py`: Alibaba graph/resource/topology prior preprocessing
 - `scripts/download_azure_traces.sh`: dataset download/extract helper
-- `scripts/preprocess/download_alibaba_microservices_2021.sh`: Alibaba microservices download helper
-- `RUNNING.md`: reproducible command reference
+- `scripts/download_alibaba_microservices.sh`: Alibaba microservices trace download/extract helper
+- `scripts/setup_faas_sim.sh`: local faas-sim setup helper under `data/tools`
 - `week1.md`: research summary intended for sharing in Notion or with collaborators
-- `week2.md`: Alibaba graph-prior and simulator setup summary
+- `week3_4.md`: graph/resource prior and simulator preparation summary
 
 ## Reproducibility Notes
 
 Required Python packages:
 
 ```bash
-pip install pandas numpy matplotlib
+pip install -r requirements.txt
+```
+
+faas-sim uses modernized dependencies in this repo because upstream pins are not
+installable on current Python:
+
+```bash
+pip install -r requirements-faas-sim-modern.txt
 ```
 
 Useful commands:
 
 ```bash
-python code/azure_trace_week1.py --mode inspect
-python code/azure_trace_week1.py --mode analysis_2019 --top-k 20 --window 60 --z 3
-python code/azure_trace_week1.py --mode baseline_2019 --top-k 20 --capacity 20 --cold-start-penalty 800 --execution-ms 100 --static-warm 1 --prediction-window 60
+python 01_jay/azure_trace_week1.py --mode inspect
+python 01_jay/azure_trace_week1.py --mode app_2019 --coverage 0.99 --window 60 --z 3
+python 01_jay/azure_trace_week1.py --mode baseline_2019 --baseline-level app --coverage 0.99 --capacity 20 --cold-start-penalty 800 --execution-ms 100 --static-warm 1 --prediction-window 60
+python 01_jay/alibaba_microservices_week3.py --mode inspect
+python 01_jay/alibaba_microservices_week3.py --mode graph_prior --min-call-count 2 --top-edges 100000
+python 01_jay/alibaba_microservices_week3.py --mode resource_prior --candidate-nodes-per-service 3
+python 01_jay/alibaba_microservices_week3.py --mode topology --edge-nodes 32 --neighbor-degree 2
 ```
 
 ## Git Hygiene

@@ -625,7 +625,142 @@ Expanding-window rolling-origin 결과:
 | HTTP/queue/timer trigger별 app 분석 | trigger type에 따른 burst 특성 분리 |
 | long-tail app subset 분석 | 99% coverage 밖 app의 cold start 특성 확인 |
 
-## 11. 참고 선행연구 및 문서
+재현 명령은 99% coverage subset을 직접 선택하도록 다음 형태를 사용한다.
+
+```bash
+python 01_jay/azure_trace_week1.py --mode app_2019 --coverage 0.99 --window 60 --z 3
+python 01_jay/azure_trace_week1.py --mode baseline_2019 --baseline-level app --coverage 0.99 --capacity 20 --cold-start-penalty 800 --execution-ms 100 --static-warm 1 --prediction-window 60
+```
+
+## 11. Temporal Holdout 검증
+
+논문 실험으로 이어가려면 예측 정책이 같은 기간에서만 좋아 보이는지, 미래 구간에서도 유지되는지 확인해야 한다. 따라서 Day 1-10에서 99% coverage app subset과 정책 파라미터를 정하고, Day 11-14에서 평가했다.
+
+실행 명령:
+
+```bash
+python 01_jay/azure_trace_week1.py \
+  --mode holdout_2019 \
+  --baseline-level app \
+  --coverage 0.99 \
+  --train-days 10 \
+  --capacity 20 \
+  --cold-start-penalty 800 \
+  --execution-ms 100 \
+  --static-warm-values 0,1,5,10,20,50,100,500,1000 \
+  --prediction-window-values 30,60,120 \
+  --threshold-window-values 30,60,120 \
+  --threshold-z-values 2,3
+```
+
+Train 기준 선택:
+
+| 항목 | 값 |
+|---|---:|
+| train days | 1-10 |
+| test days | 11-14 |
+| train unique apps | 23,159 |
+| train 99% coverage selected apps | 2,257 |
+| train actual coverage | 99.0002% |
+
+Train에서 각 family별 best config를 고른 뒤 test에서 평가한 결과:
+
+| policy | cold served ratio | weighted avg latency | weighted p95 latency | weighted p99 latency | avg warm instances | total resource cost |
+|---|---:|---:|---:|---:|---:|---:|
+| z2_trigger_w30 | 6.4056% | 151.24 ms | 432.03 ms | 740.97 ms | 14.71 | 191,235,396 |
+| z3_trigger_w30 | 7.2257% | 157.81 ms | 489.12 ms | 773.02 ms | 14.46 | 188,025,712 |
+| local_predictive_w30 | 8.3813% | 167.05 ms | 584.15 ms | 851.02 ms | 14.19 | 184,474,709 |
+| static_1000 | 30.8428% | 346.74 ms | 763.45 ms | 786.62 ms | 1000.00 | 13,000,320,000 |
+| reactive | 100.0000% | 900.00 ms | 900.00 ms | 900.00 ms | 0.00 | 0 |
+
+해석:
+
+1. local predictive는 holdout test에서도 static_1000보다 훨씬 적은 resource cost로 더 낮은 latency와 cold served ratio를 보인다.
+2. z-trigger는 단순 local predictive보다 한 단계 더 강하다. z2_trigger_w30은 local_predictive_w30 대비 cold served ratio를 8.3813%에서 6.4056%로 낮추고, weighted avg latency를 167.05 ms에서 151.24 ms로 낮췄다.
+3. z2가 z3보다 test에서 더 좋다. 즉, 이 workload에서는 3σ가 너무 보수적이고, prewarming trigger로는 2σ 계열이 더 유리하다.
+4. static_1000은 tail p99는 낮지만 resource cost가 압도적으로 크고 cold served ratio도 높다. 따라서 static warm은 강한 baseline이라기보다 provider-style cost-inefficient baseline으로 보는 것이 맞다.
+
+## 12. Cold-start / Resource Sensitivity 검증
+
+단일 cold-start penalty와 단일 capacity에서만 결론을 내면 논문 근거가 약하다. 따라서 Day 11-14 test split에서 cold-start penalty와 instance capacity를 바꿔 sensitivity를 확인했다.
+
+실행 명령:
+
+```bash
+python 01_jay/azure_trace_week1.py \
+  --mode sensitivity_2019 \
+  --baseline-level app \
+  --coverage 0.99 \
+  --train-days 10 \
+  --prediction-window 60 \
+  --window 60 \
+  --threshold-z-values 2,3 \
+  --static-warm-values 0,1,5,10,20,50,100,500,1000 \
+  --sensitivity-cold-start-penalties 200,500,800,1500 \
+  --sensitivity-capacities 10,20,50 \
+  --execution-ms 100
+```
+
+기본 조합인 capacity=20, cold-start penalty=800ms에서의 test 결과:
+
+| policy | cold served ratio | weighted avg latency | avg warm instances | total resource cost |
+|---|---:|---:|---:|---:|
+| reactive | 100.0000% | 900.00 ms | 0.00 | 0 |
+| static_1 | 96.5257% | 872.21 ms | 1.00 | 13,000,320 |
+| static_20 | 79.9477% | 739.58 ms | 20.00 | 260,006,400 |
+| static_100 | 61.7288% | 593.83 ms | 100.00 | 1,300,032,000 |
+| static_1000 | 30.8428% | 346.74 ms | 1000.00 | 13,000,320,000 |
+| local_predictive_w60 | 9.0512% | 172.41 ms | 14.18 | 184,388,853 |
+| z2_trigger_w60 | 6.7648% | 154.12 ms | 14.75 | 191,798,342 |
+| z3_trigger_w60 | 7.7129% | 161.70 ms | 14.50 | 188,540,622 |
+
+local predictive는 모든 sensitivity 조합에서 best static(static_1000)보다 낮은 latency와 낮은 cold served ratio를 보였다.
+
+| capacity | cold penalty | local cold ratio | best static cold ratio | local weighted avg | best static weighted avg | local / static resource cost |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10 | 200 ms | 9.2564% | 39.9035% | 118.51 ms | 179.81 ms | 0.0277 |
+| 10 | 500 ms | 9.2564% | 39.9035% | 146.28 ms | 299.52 ms | 0.0277 |
+| 10 | 800 ms | 9.2564% | 39.9035% | 174.05 ms | 419.23 ms | 0.0277 |
+| 10 | 1500 ms | 9.2564% | 39.9035% | 238.85 ms | 698.55 ms | 0.0277 |
+| 20 | 200 ms | 9.0512% | 30.8428% | 118.10 ms | 161.69 ms | 0.0142 |
+| 20 | 500 ms | 9.0512% | 30.8428% | 145.26 ms | 254.21 ms | 0.0142 |
+| 20 | 800 ms | 9.0512% | 30.8428% | 172.41 ms | 346.74 ms | 0.0142 |
+| 20 | 1500 ms | 9.0512% | 30.8428% | 235.77 ms | 562.64 ms | 0.0142 |
+| 50 | 200 ms | 8.6330% | 14.9341% | 117.27 ms | 129.87 ms | 0.0062 |
+| 50 | 500 ms | 8.6330% | 14.9341% | 143.17 ms | 174.67 ms | 0.0062 |
+| 50 | 800 ms | 8.6330% | 14.9341% | 169.06 ms | 219.47 ms | 0.0062 |
+| 50 | 1500 ms | 8.6330% | 14.9341% | 229.50 ms | 324.01 ms | 0.0062 |
+
+z2 trigger도 모든 sensitivity 조합에서 local predictive보다 더 낮은 weighted average latency를 보였다. resource cost 증가는 약 3.66-4.14% 수준이다.
+
+| capacity | cold penalty | local cold ratio | z2 cold ratio | local weighted avg | z2 weighted avg | z2 / local resource cost |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10 | 200 ms | 9.2564% | 6.9522% | 118.51 ms | 113.90 ms | 1.0414 |
+| 10 | 800 ms | 9.2564% | 6.9522% | 174.05 ms | 155.62 ms | 1.0414 |
+| 20 | 200 ms | 9.0512% | 6.7648% | 118.10 ms | 113.53 ms | 1.0402 |
+| 20 | 800 ms | 9.0512% | 6.7648% | 172.41 ms | 154.12 ms | 1.0402 |
+| 50 | 200 ms | 8.6330% | 6.3914% | 117.27 ms | 112.78 ms | 1.0366 |
+| 50 | 800 ms | 8.6330% | 6.3914% | 169.06 ms | 151.13 ms | 1.0366 |
+
+## 13. 검증 후 결론
+
+이번 추가 검증으로 기존 baseline 결과가 단일 기간/단일 파라미터에만 의존한 우연은 아니라는 점을 확인했다.
+
+1. Day 1-10 기반으로 선택한 app subset과 정책 파라미터가 Day 11-14에서도 유지된다.
+2. local predictive는 static warm budget을 크게 늘린 정책보다 resource 효율과 latency가 모두 좋다.
+3. z-trigger는 local predictive보다 약간 더 많은 warm instance를 쓰지만, cold served ratio와 latency를 더 낮춘다.
+4. 따라서 다음 단계의 제안 기법은 `local_predictive`만 이기는 것으로는 부족하고, `z2_trigger`를 강한 baseline으로 포함해야 한다.
+
+논문 관점에서 가장 중요한 변화:
+
+```text
+기존 strong baseline: local_predictive
+검증 후 strong baseline: local_predictive + z2_trigger
+```
+
+즉, 5-6주차 collaborative prewarming은 z2_trigger 대비 추가 이득을 보여야 논문 기여로 설득력이 있다.
+
+## 14. 참고 선행연구 및 문서
 
 | 구분 | 내용 |
 |---|---|
