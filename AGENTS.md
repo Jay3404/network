@@ -28,6 +28,22 @@ bash scripts/download_azure_traces.sh
 bash scripts/download_alibaba_microservices.sh
 ```
 
+Large Alibaba data may also be read from the lab NAS through SSHFS. The Mac
+mount point is expected to be:
+
+```text
+/Users/jay/mnt/dbi-nas
+```
+
+After mounting, the Alibaba microservices trace is available at:
+
+```text
+/Users/jay/mnt/dbi-nas/data/alibaba_clusterdata/extracted/microservices_v2021
+```
+
+The full SSH control socket and SSHFS setup commands are documented in
+`RUNNING.md`.
+
 ## Important Files
 
 - `code/azure_trace_week1.py`: Python analysis and baseline policy script
